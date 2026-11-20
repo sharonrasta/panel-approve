@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-lxloUqKrhriIDn1ZlHV/2ntXwxf9hnR6/DAd8OaE7cQ='; style-src 'sha256-kqbKb1fPqunWqKQRZaDTatv3oAPAE8g3cWBIjfFwN+U='; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-5TMiQ2S/0CNXrdph/+9uC1ryAqX+x6H7/Ux3woh84vA='; style-src 'sha256-kqbKb1fPqunWqKQRZaDTatv3oAPAE8g3cWBIjfFwN+U='; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
@@ -36,8 +36,8 @@ input{font:inherit;width:100%;padding:9px 12px;border-radius:10px;border:1px sol
 /* The approval page of the management panel. It is served from a place the panel's core does not control, and it is the only place
    the user's approval device (a passkey) signs. It shows the user exactly what it has the device sign, so a panel that was broken
    into cannot show one command and have another one signed. It sends nothing to any server: it answers only the window that opened
-   it. It keeps in this browser only what the user has seen here before: the panels that asked, and the name the user gave each
-   station */
+   it. It keeps in this browser only what the user has seen here before: the panels that asked, the stations it approved for, and the
+   name the user gave a station, when one was given (a name is not needed: without one the page shows the station's id) */
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 /*<shared>*/
 /* A command in the one form it is signed and run in: its words, a line each, in base64. The same rules as the panel's model and the
@@ -117,12 +117,15 @@ function askSign(m) {
   const sid = typeof m.sid === 'string' && /^st_[A-Za-z0-9_-]{1,37}$/.test(m.sid) ? m.sid : '', exp = Number.isInteger(m.exp) ? m.exp : 0;
   const nonce = typeof m.nonce === 'string' && /^[A-Za-z0-9_-]{22}$/.test(m.nonce) ? m.nonce : '', argv = argvOf(m.c), ids = idsOf(m.ids), now = Math.floor(Date.now() / 1000);
   if (!sid || !nonce || !argv || !ids.length || exp <= now || exp > now + 420) return refuse('הבקשה מהפאנל לא תקינה, או שהיא כבר לא בתוקף.');
-  const line = lineOf(argv), known = seen().stations[sid] || '', cmd = el('pre', 'cmd', line), st = el('div', 'card'), nameIn = el('input');
+  /* A station this browser approved for before (met), with the name the user gave it then, if any. A station it never saw is said so */
+  const all = seen().stations, met = Object.prototype.hasOwnProperty.call(all, sid), known = met ? clean(all[sid]) : '';
+  const line = lineOf(argv), cmd = el('pre', 'cmd', line), st = el('div', 'card'), nameIn = el('input');
   st.append(el('span', 'lbl', 'לאיזה שרת'));
   if (known) st.append(el('span', '', known), el('span', 'ltr note', sid));
+  else if (met) st.append(el('span', 'ltr', sid));
   else {
-    nameIn.type = 'text'; nameIn.maxLength = 40; nameIn.placeholder = 'למשל: השרת הראשי'; nameIn.setAttribute('aria-label', 'שם לשרת');
-    st.append(el('span', 'ltr', sid), el('p', 'warn', 'זו הפעם הראשונה שהדפדפן הזה מתבקש לאשר פקודה לתחנה הזאת. תן לה שם, כדי שתזהה אותה בפעם הבאה. תחנה שאתה לא מכיר: בטל.'), nameIn);
+    nameIn.type = 'text'; nameIn.maxLength = 40; nameIn.placeholder = 'שם לשרת (לא חובה)'; nameIn.setAttribute('aria-label', 'שם לשרת, לא חובה');
+    st.append(el('span', 'ltr', sid), el('p', 'warn', 'זו הפעם הראשונה שהדפדפן הזה מתבקש לאשר פקודה לתחנה הזאת. תחנה שאתה לא מכיר: בטל. אפשר לתת לה שם, כדי שתזהה אותה בפעם הבאה.'), nameIn);
   }
   const when = el('div', 'card');
   when.append(el('span', 'lbl', 'האישור'), el('span', '', 'לפקודה הזאת בלבד, פעם אחת, עד ' + new Date(exp * 1000).toLocaleTimeString('he-IL') + '.'));
@@ -130,7 +133,6 @@ function askSign(m) {
     el('p', 'note', (argv.length === 1 ? 'מילה אחת' : argv.length + ' מילים') + ', ' + line.length + ' תווים.'), st, when, asker(),
     ...buttons('אשר במכשיר הזה', async () => {
       const name = known || clean(nameIn.value);
-      if (!name) return 'תן שם לשרת לפני שאתה מאשר.';
       if (Math.floor(Date.now() / 1000) >= exp) return 'האישור כבר לא בתוקף. בטל, ולחץ "אשר" שוב בפאנל.';
       const ch = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(textOf(sid, exp, nonce, m.c)));
       const a = await navigator.credentials.get({ publicKey: { challenge: ch, rpId: location.hostname, allowCredentials: ids.map(i => ({ type: 'public-key', id: b64u(i) })), userVerification: 'required', timeout: 120000 } });
