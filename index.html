@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-lxloUqKrhriIDn1ZlHV/2ntXwxf9hnR6/DAd8OaE7cQ='; style-src 'sha256-kqbKb1fPqunWqKQRZaDTatv3oAPAE8g3cWBIjfFwN+U='; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>עמוד האישור</title>
+<style>
+:root{color-scheme:light dark;--ink:#16181d;--ink-2:#5b6270;--bg:#f4f5f7;--card:#fff;--line:#d9dce3;--accent:#4f46c8;--bad:#b3261e;--warn:#8a5a00;--warn-bg:#fff6dd}
+@media (prefers-color-scheme:dark){:root{--ink:#eceef2;--ink-2:#a3aab8;--bg:#14161b;--card:#1d2027;--line:#343945;--accent:#8f88f2;--bad:#ff8a80;--warn:#ffd27a;--warn-bg:#3a2f12}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 32px;display:grid;gap:12px}
+h1{font-size:1.25em;margin:8px 0 0}
+p{margin:0}
+.note{color:var(--ink-2)}
+.err{color:var(--bad);font-weight:600}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:10px 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:8px}
+.lbl{font-size:.85em;color:var(--ink-2)}
+.cmd{margin:0;padding:12px;border-radius:10px;background:#0f1115;color:#e9edf5;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;direction:ltr;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
+.ltr{direction:ltr;unicode-bidi:embed;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em;overflow-wrap:anywhere}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+button{font:inherit;padding:10px 18px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+button.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button:disabled{opacity:.55;cursor:default}
+input{font:inherit;width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+</style>
+</head>
+<body>
+<main id="app"><h1>עמוד האישור</h1><p class="note">טוען…</p></main>
+<script>
+'use strict';
+/* The approval page of the management panel. It is served from a place the panel's core does not control, and it is the only place
+   the user's approval device (a passkey) signs. It shows the user exactly what it has the device sign, so a panel that was broken
+   into cannot show one command and have another one signed. It sends nothing to any server: it answers only the window that opened
+   it. It keeps in this browser only what the user has seen here before: the panels that asked, and the name the user gave each
+   station */
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+/*<shared>*/
+/* A command in the one form it is signed and run in: its words, a line each, in base64. The same rules as the panel's model and the
+   server's runner: 1 to 64 words of printable ASCII, the first one the name of a program, up to 4,000 characters together. null
+   for anything else, so nothing else is ever shown or signed */
+function argvOf(c) {
+  if (typeof c !== 'string' || c.length > 5400 || !/^[A-Za-z0-9+/]+={0,2}$/.test(c)) return null;
+  let s;
+  try { s = atob(c); } catch (e) { return null; }
+  if (!s.endsWith('\n')) return null;
+  const v = s.slice(0, -1).split('\n');
+  if (!v.length || v.length > 64 || !v.every(x => /^[\x20-\x7e]*$/.test(x)) || v[0] === '' || v[0][0] === '-' || v.reduce((n, x) => n + x.length + 1, 0) > 4000) return null;
+  return btoa(v.map(x => x + '\n').join('')) === c ? v : null;
+}
+/* The command as one line, each word quoted the way a shell would need it: what the user reads */
+function lineOf(v) { return v.map(x => /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(x) ? x : "'" + x.replace(/'/g, "'\\''") + "'").join(' '); }
+/* The exact text the device signs (as its challenge, hashed) and the server checks: the station, the expiry, a number used once, and
+   the command */
+function textOf(sid, exp, nonce, c) { return ['panel-act-v2', sid, String(exp), nonce, c, ''].join('\n'); }
+/*</shared>*/
+const b64u = s => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0));
+const b64 = buf => btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
+const clean = s => typeof s === 'string' ? s.replace(/[\u0000-\u001f\u007f‎‏‪-‮⁦-⁩]/g, '').trim().slice(0, 40) : '';
+const idsOf = a => (Array.isArray(a) ? a : []).filter(x => typeof x === 'string' && /^[A-Za-z0-9_-]{16,1400}$/.test(x)).slice(0, 16);
+/* What the user has seen in this browser before */
+const KEY = 'panel-approve';
+function seen() { try { const x = JSON.parse(localStorage.getItem(KEY) || '{}'); return { panels: Object.assign({}, x.panels), stations: Object.assign({}, x.stations) }; } catch (e) { return { panels: {}, stations: {} }; } }
+function keep(f) { try { const s = seen(); f(s); localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
+
+const app = document.getElementById('app');
+let from = null, origin = '', busy = false;
+function show(title, nodes) { app.textContent = ''; app.append(el('h1', '', title), ...nodes); }
+function answer(m) { try { from.postMessage(Object.assign({ panelApprove: 1, t: 'done' }, m), origin); } catch (e) {} }
+function finish(text) { show('עמוד האישור', [el('p', 'note', text)]); setTimeout(() => { try { window.close(); } catch (e) {} }, 700); }
+function refuse(text) { answer({ ok: false, error: 'bad request' }); show('עמוד האישור', [el('p', 'err', text), el('p', 'note', 'אפשר לסגור את החלון.')]); }
+/* Who asked: the address of the window that opened this page, as the browser itself says it */
+function asker() {
+  const c = el('div', 'card');
+  c.append(el('span', 'lbl', 'מי ביקש'), el('span', 'ltr', origin));
+  if (!seen().panels[origin]) c.append(el('p', 'warn', 'זו הפעם הראשונה שהכתובת הזאת מבקשת משהו מהדפדפן הזה. המשך רק אם זו הכתובת של הפאנל שלך.'));
+  return c;
+}
+function buttons(yes, onYes) {
+  const row = el('div', 'row'), go = el('button', 'pri', yes), no = el('button', '', 'בטל'), err = el('p', 'err');
+  go.type = no.type = 'button';
+  no.addEventListener('click', () => { if (busy) return; answer({ ok: false, error: 'cancel' }); finish('בוטל. אפשר לסגור את החלון.'); });
+  go.addEventListener('click', async () => {
+    if (busy) return;
+    busy = true; go.disabled = true; err.textContent = '';
+    const why = await onYes().catch(e => (e && e.name === 'InvalidStateError' ? 'המכשיר הזה כבר ברשימה.' : 'זה לא הושלם במכשיר. אפשר לנסות שוב, או לבטל.'));
+    if (why) { busy = false; go.disabled = false; err.textContent = why; }
+  });
+  row.append(go, no);
+  return [row, err];
+}
+/* One more approval device: the device makes a key for this site, and only its public part goes back to the panel */
+function askAdd(m) {
+  const name = clean(m.name), ids = idsOf(m.ids);
+  if (!name) return refuse('הבקשה מהפאנל לא תקינה.');
+  const c = el('div', 'card');
+  c.append(el('span', 'lbl', 'שם המכשיר'), el('span', '', name));
+  show('הוספת מכשיר אישור', [el('p', 'note', 'המכשיר הזה ייצור מפתח לאישור פקודות. רק החלק הציבורי של המפתח עובר לפאנל, והשרת יסמוך עליו רק אחרי שתריץ בשרת את הפקודה כ-root.'), c, asker(),
+    ...buttons('הוסף את המכשיר הזה', async () => {
+      const cr = await navigator.credentials.create({ publicKey: { rp: { id: location.hostname, name: 'אישור פקודות' }, user: { id: crypto.getRandomValues(new Uint8Array(16)), name: name, displayName: name },
+        challenge: crypto.getRandomValues(new Uint8Array(32)), pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { userVerification: 'required', residentKey: 'discouraged' }, excludeCredentials: ids.map(i => ({ type: 'public-key', id: b64u(i) })), attestation: 'none', timeout: 120000 } });
+      const r = cr.response, pk = r.getPublicKey ? r.getPublicKey() : null, alg = r.getPublicKeyAlgorithm ? r.getPublicKeyAlgorithm() : 0;
+      if (!pk || (alg !== -7 && alg !== -257)) return 'המכשיר נתן מפתח מסוג שהשרת לא בודק. נסה מכשיר אחר.';
+      keep(s => { s.panels[origin] = 1; });
+      answer({ ok: true, id: cr.id, spki: b64(pk), alg: alg });
+      finish('המכשיר נוסף. אפשר לסגור את החלון.');
+      return '';
+    })]);
+}
+/* An approval of one command: the page shows the command from the same field it has the device sign */
+function askSign(m) {
+  const sid = typeof m.sid === 'string' && /^st_[A-Za-z0-9_-]{1,37}$/.test(m.sid) ? m.sid : '', exp = Number.isInteger(m.exp) ? m.exp : 0;
+  const nonce = typeof m.nonce === 'string' && /^[A-Za-z0-9_-]{22}$/.test(m.nonce) ? m.nonce : '', argv = argvOf(m.c), ids = idsOf(m.ids), now = Math.floor(Date.now() / 1000);
+  if (!sid || !nonce || !argv || !ids.length || exp <= now || exp > now + 420) return refuse('הבקשה מהפאנל לא תקינה, או שהיא כבר לא בתוקף.');
+  const line = lineOf(argv), known = seen().stations[sid] || '', cmd = el('pre', 'cmd', line), st = el('div', 'card'), nameIn = el('input');
+  st.append(el('span', 'lbl', 'לאיזה שרת'));
+  if (known) st.append(el('span', '', known), el('span', 'ltr note', sid));
+  else {
+    nameIn.type = 'text'; nameIn.maxLength = 40; nameIn.placeholder = 'למשל: השרת הראשי'; nameIn.setAttribute('aria-label', 'שם לשרת');
+    st.append(el('span', 'ltr', sid), el('p', 'warn', 'זו הפעם הראשונה שהדפדפן הזה מתבקש לאשר פקודה לתחנה הזאת. תן לה שם, כדי שתזהה אותה בפעם הבאה. תחנה שאתה לא מכיר: בטל.'), nameIn);
+  }
+  const when = el('div', 'card');
+  when.append(el('span', 'lbl', 'האישור'), el('span', '', 'לפקודה הזאת בלבד, פעם אחת, עד ' + new Date(exp * 1000).toLocaleTimeString('he-IL') + '.'));
+  show('אישור פקודה כ-root', [el('p', 'note', 'זו הפקודה שתרוץ בשרת כ-root אם תאשר. קרא את כולה: המכשיר חותם על מה שכתוב כאן, ולא על מה שמוצג בפאנל.'), cmd,
+    el('p', 'note', (argv.length === 1 ? 'מילה אחת' : argv.length + ' מילים') + ', ' + line.length + ' תווים.'), st, when, asker(),
+    ...buttons('אשר במכשיר הזה', async () => {
+      const name = known || clean(nameIn.value);
+      if (!name) return 'תן שם לשרת לפני שאתה מאשר.';
+      if (Math.floor(Date.now() / 1000) >= exp) return 'האישור כבר לא בתוקף. בטל, ולחץ "אשר" שוב בפאנל.';
+      const ch = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(textOf(sid, exp, nonce, m.c)));
+      const a = await navigator.credentials.get({ publicKey: { challenge: ch, rpId: location.hostname, allowCredentials: ids.map(i => ({ type: 'public-key', id: b64u(i) })), userVerification: 'required', timeout: 120000 } });
+      keep(s => { s.panels[origin] = 1; s.stations[sid] = name; });
+      answer({ ok: true, ad: b64(a.response.authenticatorData), cd: b64(a.response.clientDataJSON), ps: b64(a.response.signature) });
+      finish('נחתם. אפשר לסגור את החלון.');
+      return '';
+    })]);
+}
+/* One request, from the window that opened this page, and only from a panel over https (or on this machine, for a local test) */
+function onMessage(e) {
+  if (from || e.source !== window.opener || !e.data || e.data.panelApprove !== 1) return;
+  if (!(/^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(e.origin) || (location.hostname === 'localhost' && /^http:\/\/localhost(:\d+)?$/.test(e.origin)))) return;
+  from = e.source; origin = e.origin;
+  if (e.data.t === 'add') askAdd(e.data); else if (e.data.t === 'sign') askSign(e.data); else refuse('הבקשה מהפאנל לא מוכרת.');
+}
+(function start() {
+  const only = t => show('עמוד האישור', [el('p', 'note', t)]);
+  if (window.top !== window.self) return only('העמוד הזה לא פועל בתוך עמוד אחר.');
+  if (!window.opener) return only('העמוד הזה נפתח מהפאנל, כשמאשרים פקודה או מוסיפים מכשיר אישור. אין מה לעשות בו לבד.');
+  if (!window.PublicKeyCredential || !navigator.credentials || !window.isSecureContext) return only('הדפדפן הזה לא תומך במכשיר אישור (passkey).');
+  only('מחכה לבקשה מהפאנל…');
+  window.addEventListener('message', onMessage);
+  /* The panel is told the page is ready until its request arrives (it may still be asking the core) */
+  let n = 0;
+  const iv = setInterval(() => { if (from || ++n > 200) { clearInterval(iv); if (!from) only('לא הגיעה בקשה מהפאנל. אפשר לסגור את החלון.'); return; } try { window.opener.postMessage({ panelApprove: 1, t: 'ready' }, '*'); } catch (e) {} }, 300);
+})();
+</script>
+</body>
+</html>
