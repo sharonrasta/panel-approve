@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-5TMiQ2S/0CNXrdph/+9uC1ryAqX+x6H7/Ux3woh84vA='; style-src 'sha256-kqbKb1fPqunWqKQRZaDTatv3oAPAE8g3cWBIjfFwN+U='; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-tt5E1JnWwL4rAkrdX4raPvzykj8awLT+HQ5j0f8vXVM='; style-src 'sha256-/6Ryq4E95n4mrb93mRZgos4oUbVaSIWR7BSMgo6Q9Z4='; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
@@ -20,6 +20,8 @@ p{margin:0}
 .warn{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:10px 12px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:8px}
 .lbl{font-size:.85em;color:var(--ink-2)}
+.cmds{margin:0;padding-inline-start:26px;display:grid;gap:8px}
+.cmds li::marker{color:var(--ink-2);font-weight:600}
 .cmd{margin:0;padding:12px;border-radius:10px;background:#0f1115;color:#e9edf5;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;direction:ltr;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
 .ltr{direction:ltr;unicode-bidi:embed;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em;overflow-wrap:anywhere}
 .row{display:flex;gap:10px;flex-wrap:wrap}
@@ -54,9 +56,19 @@ function argvOf(c) {
 }
 /* The command as one line, each word quoted the way a shell would need it: what the user reads */
 function lineOf(v) { return v.map(x => /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(x) ? x : "'" + x.replace(/'/g, "'\\''") + "'").join(' '); }
+/* The commands of an approval, each as its words: one, or a list of 2 to 10 in the order they run (their forms joined by ","), with up
+   to 4,000 characters of words together. null for anything else */
+function cmdsOf(c) {
+  if (typeof c !== 'string') return null;
+  if (c.indexOf(',') < 0) { const v = argvOf(c); return v ? [v] : null; }
+  const vs = c.split(',').map(argvOf);
+  return vs.length >= 2 && vs.length <= 10 && vs.every(Boolean) && vs.reduce((n, v) => n + v.reduce((m, x) => m + x.length + 1, 0), 0) <= 4000 ? vs : null;
+}
 /* The exact text the device signs (as its challenge, hashed) and the server checks: the station, the expiry, a number used once, and
-   the command */
-function textOf(sid, exp, nonce, c) { return ['panel-act-v2', sid, String(exp), nonce, c, ''].join('\n'); }
+   the command. A list is one text, its commands a line each, in order */
+function textOf(sid, exp, nonce, c) {
+  return c.indexOf(',') < 0 ? ['panel-act-v2', sid, String(exp), nonce, c, ''].join('\n') : ['panel-act-v3', sid, String(exp), nonce].concat(c.split(','), ['']).join('\n');
+}
 /*</shared>*/
 const b64u = s => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0));
 const b64 = buf => btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
@@ -68,11 +80,30 @@ function seen() { try { const x = JSON.parse(localStorage.getItem(KEY) || '{}');
 function keep(f) { try { const s = seen(); f(s); localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
 
 const app = document.getElementById('app');
-let from = null, origin = '', busy = false;
-function show(title, nodes) { app.textContent = ''; app.append(el('h1', '', title), ...nodes); }
-function answer(m) { try { from.postMessage(Object.assign({ panelApprove: 1, t: 'done' }, m), origin); } catch (e) {} }
-function finish(text) { show('עמוד האישור', [el('p', 'note', text)]); setTimeout(() => { try { window.close(); } catch (e) {} }, 700); }
-function refuse(text) { answer({ ok: false, error: 'bad request' }); show('עמוד האישור', [el('p', 'err', text), el('p', 'note', 'אפשר לסגור את החלון.')]); }
+/* The version of this page, told to the panel with "ready": 2 signs a list of commands and stays open for a session */
+const V = 2;
+/* from and origin: the panel's window, fixed by its first request. cur: a request is on the screen. mode: what it is. until: when the
+   approval on the screen expires. asked: its number used once, which every answer about it names, so the panel never takes it for
+   another approval. idle: since when nothing was asked */
+let from = null, origin = '', busy = false, cur = false, mode = '', until = 0, asked = '', idle = 0;
+function show(title, nodes) { document.title = (cur && mode === 'sign' ? '● ' : '') + title; app.textContent = ''; app.append(el('h1', '', title), ...nodes); }
+function answer(m) { try { from.postMessage(Object.assign({ panelApprove: 1, t: 'done' }, asked ? { nonce: asked } : {}, m), origin); } catch (e) {} }
+function finish(text) { cur = true; show('עמוד האישור', [el('p', 'note', text)]); setTimeout(() => { try { window.close(); } catch (e) {} }, 700); }
+/* Between the approvals of a session: the window stays open for the next command of the worker, and closes by itself when the panel says
+   the worker is done, when the panel's window is gone, or after 30 minutes with no request */
+function wait(text, bad) {
+  cur = false; busy = false; mode = ''; until = 0; asked = ''; idle = Date.now();
+  const row = el('div', 'row'), close = el('button', '', 'סגור את החלון');
+  close.type = 'button';
+  close.addEventListener('click', () => { try { window.close(); } catch (e) {} });
+  row.append(close);
+  show('עמוד האישור', [el('p', bad ? 'err' : 'note', text), el('p', 'note', 'החלון נשאר פתוח לפקודה הבאה של העובד, ונסגר לבד כשהעובד מסיים.'), row]);
+}
+function refuse(text) {
+  answer({ ok: false, error: 'bad request' });
+  if (mode === 'sign') return wait(text, true);
+  show('עמוד האישור', [el('p', 'err', text), el('p', 'note', 'אפשר לסגור את החלון.')]);
+}
 /* Who asked: the address of the window that opened this page, as the browser itself says it */
 function asker() {
   const c = el('div', 'card');
@@ -83,7 +114,7 @@ function asker() {
 function buttons(yes, onYes) {
   const row = el('div', 'row'), go = el('button', 'pri', yes), no = el('button', '', 'בטל'), err = el('p', 'err');
   go.type = no.type = 'button';
-  no.addEventListener('click', () => { if (busy) return; answer({ ok: false, error: 'cancel' }); finish('בוטל. אפשר לסגור את החלון.'); });
+  no.addEventListener('click', () => { if (busy) return; answer({ ok: false, error: 'cancel' }); if (mode === 'sign') wait('בוטל.'); else finish('בוטל. אפשר לסגור את החלון.'); });
   go.addEventListener('click', async () => {
     if (busy) return;
     busy = true; go.disabled = true; err.textContent = '';
@@ -112,14 +143,18 @@ function askAdd(m) {
       return '';
     })]);
 }
-/* An approval of one command: the page shows the command from the same field it has the device sign */
+/* An approval of one command, or of a list of them: the page shows the commands from the same field it has the device sign */
 function askSign(m) {
+  asked = typeof m.nonce === 'string' ? m.nonce.slice(0, 40) : '';
   const sid = typeof m.sid === 'string' && /^st_[A-Za-z0-9_-]{1,37}$/.test(m.sid) ? m.sid : '', exp = Number.isInteger(m.exp) ? m.exp : 0;
-  const nonce = typeof m.nonce === 'string' && /^[A-Za-z0-9_-]{22}$/.test(m.nonce) ? m.nonce : '', argv = argvOf(m.c), ids = idsOf(m.ids), now = Math.floor(Date.now() / 1000);
-  if (!sid || !nonce || !argv || !ids.length || exp <= now || exp > now + 420) return refuse('הבקשה מהפאנל לא תקינה, או שהיא כבר לא בתוקף.');
+  const nonce = typeof m.nonce === 'string' && /^[A-Za-z0-9_-]{22}$/.test(m.nonce) ? m.nonce : '', cmds = cmdsOf(m.c), ids = idsOf(m.ids), now = Math.floor(Date.now() / 1000);
+  if (!sid || !nonce || !cmds || !ids.length || exp <= now || exp > now + 420) return refuse('הבקשה מהפאנל לא תקינה, או שהיא כבר לא בתוקף.');
+  const many = cmds.length > 1, lines = cmds.map(lineOf), argv = cmds[0], at = new Date(exp * 1000).toLocaleTimeString('he-IL');
+  until = exp;
   /* A station this browser approved for before (met), with the name the user gave it then, if any. A station it never saw is said so */
   const all = seen().stations, met = Object.prototype.hasOwnProperty.call(all, sid), known = met ? clean(all[sid]) : '';
-  const line = lineOf(argv), cmd = el('pre', 'cmd', line), st = el('div', 'card'), nameIn = el('input');
+  const line = lines[0], st = el('div', 'card'), nameIn = el('input'), cmd = many ? el('ol', 'cmds') : el('pre', 'cmd', line);
+  if (many) lines.forEach(l => { const li = el('li'); li.append(el('pre', 'cmd', l)); cmd.append(li); });
   st.append(el('span', 'lbl', 'לאיזה שרת'));
   if (known) st.append(el('span', '', known), el('span', 'ltr note', sid));
   else if (met) st.append(el('span', 'ltr', sid));
@@ -128,9 +163,13 @@ function askSign(m) {
     st.append(el('span', 'ltr', sid), el('p', 'warn', 'זו הפעם הראשונה שהדפדפן הזה מתבקש לאשר פקודה לתחנה הזאת. תחנה שאתה לא מכיר: בטל. אפשר לתת לה שם, כדי שתזהה אותה בפעם הבאה.'), nameIn);
   }
   const when = el('div', 'card');
-  when.append(el('span', 'lbl', 'האישור'), el('span', '', 'לפקודה הזאת בלבד, פעם אחת, עד ' + new Date(exp * 1000).toLocaleTimeString('he-IL') + '.'));
-  show('אישור פקודה כ-root', [el('p', 'note', 'זו הפקודה שתרוץ בשרת כ-root אם תאשר. קרא את כולה: המכשיר חותם על מה שכתוב כאן, ולא על מה שמוצג בפאנל.'), cmd,
-    el('p', 'note', (argv.length === 1 ? 'מילה אחת' : argv.length + ' מילים') + ', ' + line.length + ' תווים.'), st, when, asker(),
+  when.append(el('span', 'lbl', 'האישור'), el('span', '', many ? 'לפקודות האלה בלבד, כל אחת פעם אחת. הראשונה מתחילה עד ' + at + ', וכל פקודה אחריה מתחילה מיד כשהקודמת הצליחה.'
+    : 'לפקודה הזאת בלבד, פעם אחת, עד ' + at + '.'));
+  const size = many ? lines.length + ' פקודות, ' + lines.reduce((n, l) => n + l.length, 0) + ' תווים.' : (argv.length === 1 ? 'מילה אחת' : argv.length + ' מילים') + ', ' + line.length + ' תווים.';
+  show(many ? 'אישור ' + lines.length + ' פקודות כ-root' : 'אישור פקודה כ-root', [el('p', 'note', many
+    ? 'אלה הפקודות שירוצו בשרת כ-root אם תאשר, לפי הסדר, ונעצרות בראשונה שנכשלת. קרא את כולן: המכשיר חותם על מה שכתוב כאן, ולא על מה שמוצג בפאנל.'
+    : 'זו הפקודה שתרוץ בשרת כ-root אם תאשר. קרא את כולה: המכשיר חותם על מה שכתוב כאן, ולא על מה שמוצג בפאנל.'), cmd,
+    el('p', 'note', size), st, when, asker(),
     ...buttons('אשר במכשיר הזה', async () => {
       const name = known || clean(nameIn.value);
       if (Math.floor(Date.now() / 1000) >= exp) return 'האישור כבר לא בתוקף. בטל, ולחץ "אשר" שוב בפאנל.';
@@ -138,16 +177,38 @@ function askSign(m) {
       const a = await navigator.credentials.get({ publicKey: { challenge: ch, rpId: location.hostname, allowCredentials: ids.map(i => ({ type: 'public-key', id: b64u(i) })), userVerification: 'required', timeout: 120000 } });
       keep(s => { s.panels[origin] = 1; s.stations[sid] = name; });
       answer({ ok: true, ad: b64(a.response.authenticatorData), cd: b64(a.response.clientDataJSON), ps: b64(a.response.signature) });
-      finish('נחתם. אפשר לסגור את החלון.');
+      wait(many ? 'נחתם: ' + lines.length + ' הפקודות ירוצו לפי הסדר.' : 'נחתם.');
       return '';
     })]);
 }
-/* One request, from the window that opened this page, and only from a panel over https (or on this machine, for a local test) */
+/* Requests come only from the window that opened this page, and only from a panel over https (or on this machine, for a local test):
+   the first request fixes which, and every later one has to come from the same window and the same address. One request at a time */
 function onMessage(e) {
-  if (from || e.source !== window.opener || !e.data || e.data.panelApprove !== 1) return;
-  if (!(/^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(e.origin) || (location.hostname === 'localhost' && /^http:\/\/localhost(:\d+)?$/.test(e.origin)))) return;
-  from = e.source; origin = e.origin;
-  if (e.data.t === 'add') askAdd(e.data); else if (e.data.t === 'sign') askSign(e.data); else refuse('הבקשה מהפאנל לא מוכרת.');
+  if (!e.data || e.data.panelApprove !== 1) return;
+  if (!from) {
+    if (e.source !== window.opener) return;
+    if (!(/^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(e.origin) || (location.hostname === 'localhost' && /^http:\/\/localhost(:\d+)?$/.test(e.origin)))) return;
+    from = e.source; origin = e.origin; session();
+  } else if (e.source !== from || e.origin !== origin) return;
+  if (e.data.t === 'end') { if (!busy) finish('העובד סיים, והחלון נסגר.'); return; }
+  /* The request on the screen stopped waiting in the panel (declined there, or its run ended): it is taken off, unsigned */
+  if (e.data.t === 'cancel') { if (cur && mode === 'sign' && !busy && asked && e.data.nonce === asked) { answer({ ok: false, error: 'gone' }); wait('הבקשה כבר לא מחכה לאישור, ולא נחתמה.'); } return; }
+  if (cur) return;
+  cur = true; idle = Date.now();
+  if (e.data.t === 'add') { mode = 'add'; askAdd(e.data); } else if (e.data.t === 'sign') { mode = 'sign'; askSign(e.data); } else refuse('הבקשה מהפאנל לא מוכרת.');
+}
+/* While the window waits for the next request of its session it tells the panel it is ready, to the panel's own address only. An
+   approval that expired on the screen before it was signed goes back to the panel as not approved */
+function session() {
+  setInterval(() => {
+    if (from.closed) { try { window.close(); } catch (e) {} return; }
+    if (cur) {
+      if (mode === 'sign' && !busy && until && Date.now() / 1000 >= until) { answer({ ok: false, error: 'expired' }); wait('האישור פג לפני שנחתם, והפקודה לא אושרה.', true); }
+      return;
+    }
+    if (Date.now() - idle > 1800000) { finish('לא הגיעה בקשה חדשה 30 דקות, והחלון נסגר.'); return; }
+    try { from.postMessage({ panelApprove: 1, t: 'ready', v: V }, origin); } catch (e) {}
+  }, 300);
 }
 (function start() {
   const only = t => show('עמוד האישור', [el('p', 'note', t)]);
@@ -158,7 +219,7 @@ function onMessage(e) {
   window.addEventListener('message', onMessage);
   /* The panel is told the page is ready until its request arrives (it may still be asking the core) */
   let n = 0;
-  const iv = setInterval(() => { if (from || ++n > 200) { clearInterval(iv); if (!from) only('לא הגיעה בקשה מהפאנל. אפשר לסגור את החלון.'); return; } try { window.opener.postMessage({ panelApprove: 1, t: 'ready' }, '*'); } catch (e) {} }, 300);
+  const iv = setInterval(() => { if (from || ++n > 200) { clearInterval(iv); if (!from) only('לא הגיעה בקשה מהפאנל. אפשר לסגור את החלון.'); return; } try { window.opener.postMessage({ panelApprove: 1, t: 'ready', v: V }, '*'); } catch (e) {} }, 300);
 })();
 </script>
 </body>
