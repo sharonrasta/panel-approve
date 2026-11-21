@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-tt5E1JnWwL4rAkrdX4raPvzykj8awLT+HQ5j0f8vXVM='; style-src 'sha256-/6Ryq4E95n4mrb93mRZgos4oUbVaSIWR7BSMgo6Q9Z4='; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-/r/tfY3AMR4ht1SKIkpkY6rFpNSqNixpR2ZxhuD45xQ='; style-src 'sha256-mDyjh14umhpcKVJbFqRf4bKhgVqrxc8EaGtaALqwumg='; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
@@ -12,23 +12,26 @@
 @media (prefers-color-scheme:dark){:root{--ink:#eceef2;--ink-2:#a3aab8;--bg:#14161b;--card:#1d2027;--line:#343945;--accent:#8f88f2;--bad:#ff8a80;--warn:#ffd27a;--warn-bg:#3a2f12}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
-main{max-width:640px;margin:0 auto;padding:20px 16px 32px;display:grid;gap:12px}
-h1{font-size:1.25em;margin:8px 0 0}
+main{max-width:640px;margin:0 auto;padding:10px 14px 0;display:grid;gap:8px}
+h1{font-size:1.1em;margin:0}
 p{margin:0}
-.note{color:var(--ink-2)}
+.note{color:var(--ink-2);font-size:.9em}
 .err{color:var(--bad);font-weight:600}
-.warn{background:var(--warn-bg);color:var(--warn);border-radius:10px;padding:10px 12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:8px}
+.err:empty{display:none}
+.warn{background:var(--warn-bg);color:var(--warn);border-radius:8px;padding:6px 10px;font-size:.92em}
 .lbl{font-size:.85em;color:var(--ink-2)}
-.cmds{margin:0;padding-inline-start:26px;display:grid;gap:8px}
+.facts{display:flex;flex-wrap:wrap;gap:2px 16px;font-size:.9em}
+.facts>span{display:inline-flex;gap:6px;align-items:baseline;min-width:0}
+.cmds{margin:0;padding-inline-start:24px;display:grid;gap:6px}
 .cmds li::marker{color:var(--ink-2);font-weight:600}
-.cmd{margin:0;padding:12px;border-radius:10px;background:#0f1115;color:#e9edf5;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;direction:ltr;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto}
+.cmd{margin:0;padding:8px 10px;border-radius:8px;background:#0f1115;color:#e9edf5;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;direction:ltr;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto}
 .ltr{direction:ltr;unicode-bidi:embed;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em;overflow-wrap:anywhere}
 .row{display:flex;gap:10px;flex-wrap:wrap}
-button{font:inherit;padding:10px 18px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.bar{position:sticky;bottom:0;display:grid;gap:6px;margin:0 -14px;padding:8px 14px 10px;background:var(--bg);border-top:1px solid var(--line)}
+button{font:inherit;padding:8px 18px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
 button.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 button:disabled{opacity:.55;cursor:default}
-input{font:inherit;width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+input{font:inherit;width:100%;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
 </style>
 </head>
 <body>
@@ -86,7 +89,7 @@ const V = 2;
    approval on the screen expires. asked: its number used once, which every answer about it names, so the panel never takes it for
    another approval. idle: since when nothing was asked */
 let from = null, origin = '', busy = false, cur = false, mode = '', until = 0, asked = '', idle = 0;
-function show(title, nodes) { document.title = (cur && mode === 'sign' ? '● ' : '') + title; app.textContent = ''; app.append(el('h1', '', title), ...nodes); }
+function show(title, nodes) { document.title = (cur && mode === 'sign' ? '● ' : '') + title; app.textContent = ''; app.append(el('h1', '', title), ...nodes.filter(Boolean)); window.scrollTo(0, 0); }
 function answer(m) { try { from.postMessage(Object.assign({ panelApprove: 1, t: 'done' }, asked ? { nonce: asked } : {}, m), origin); } catch (e) {} }
 function finish(text) { cur = true; show('עמוד האישור', [el('p', 'note', text)]); setTimeout(() => { try { window.close(); } catch (e) {} }, 700); }
 /* Between the approvals of a session: the window stays open for the next command of the worker, and closes by itself when the panel says
@@ -104,15 +107,16 @@ function refuse(text) {
   if (mode === 'sign') return wait(text, true);
   show('עמוד האישור', [el('p', 'err', text), el('p', 'note', 'אפשר לסגור את החלון.')]);
 }
-/* Who asked: the address of the window that opened this page, as the browser itself says it */
-function asker() {
-  const c = el('div', 'card');
-  c.append(el('span', 'lbl', 'מי ביקש'), el('span', 'ltr', origin));
-  if (!seen().panels[origin]) c.append(el('p', 'warn', 'זו הפעם הראשונה שהכתובת הזאת מבקשת משהו מהדפדפן הזה. המשך רק אם זו הכתובת של הפאנל שלך.'));
-  return c;
-}
+/* The page is laid out for a small window: what is asked for and the warnings first, the facts of the request in a line or two, and the
+   actions always at the bottom of the window, so nothing has to be scrolled to before approving. A fact: its label and its value */
+function fact(label, ...value) { const f = el('span'); f.append(el('span', 'lbl', label), ...value); return f; }
+/* Who asked: the address of the window that opened this page, as the browser itself says it, and a warning when this browser never saw
+   it ask before */
+const asker = () => fact('מי ביקש', el('span', 'ltr', origin));
+const askerWarn = () => seen().panels[origin] ? null : el('p', 'warn', 'זו הפעם הראשונה שהכתובת הזאת מבקשת משהו מהדפדפן הזה. המשך רק אם זו הכתובת של הפאנל שלך.');
+function facts(...fs) { const d = el('div', 'facts'); d.append(...fs); return d; }
 function buttons(yes, onYes) {
-  const row = el('div', 'row'), go = el('button', 'pri', yes), no = el('button', '', 'בטל'), err = el('p', 'err');
+  const bar = el('div', 'bar'), row = el('div', 'row'), go = el('button', 'pri', yes), no = el('button', '', 'בטל'), err = el('p', 'err');
   go.type = no.type = 'button';
   no.addEventListener('click', () => { if (busy) return; answer({ ok: false, error: 'cancel' }); if (mode === 'sign') wait('בוטל.'); else finish('בוטל. אפשר לסגור את החלון.'); });
   go.addEventListener('click', async () => {
@@ -122,16 +126,16 @@ function buttons(yes, onYes) {
     if (why) { busy = false; go.disabled = false; err.textContent = why; }
   });
   row.append(go, no);
-  return [row, err];
+  bar.append(row, err);
+  return bar;
 }
 /* One more approval device: the device makes a key for this site, and only its public part goes back to the panel */
 function askAdd(m) {
   const name = clean(m.name), ids = idsOf(m.ids);
   if (!name) return refuse('הבקשה מהפאנל לא תקינה.');
-  const c = el('div', 'card');
-  c.append(el('span', 'lbl', 'שם המכשיר'), el('span', '', name));
-  show('הוספת מכשיר אישור', [el('p', 'note', 'המכשיר הזה ייצור מפתח לאישור פקודות. רק החלק הציבורי של המפתח עובר לפאנל, והשרת יסמוך עליו רק אחרי שתריץ בשרת את הפקודה כ-root.'), c, asker(),
-    ...buttons('הוסף את המכשיר הזה', async () => {
+  show('הוספת מכשיר אישור', [askerWarn(), facts(fact('שם המכשיר', el('span', '', name)), asker()),
+    el('p', 'note', 'המכשיר הזה ייצור מפתח לאישור פקודות. רק החלק הציבורי של המפתח עובר לפאנל, והשרת יסמוך עליו רק אחרי שתריץ בשרת את הפקודה כ-root.'),
+    buttons('הוסף את המכשיר הזה', async () => {
       const cr = await navigator.credentials.create({ publicKey: { rp: { id: location.hostname, name: 'אישור פקודות' }, user: { id: crypto.getRandomValues(new Uint8Array(16)), name: name, displayName: name },
         challenge: crypto.getRandomValues(new Uint8Array(32)), pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
         authenticatorSelection: { userVerification: 'required', residentKey: 'discouraged' }, excludeCredentials: ids.map(i => ({ type: 'public-key', id: b64u(i) })), attestation: 'none', timeout: 120000 } });
@@ -153,24 +157,19 @@ function askSign(m) {
   until = exp;
   /* A station this browser approved for before (met), with the name the user gave it then, if any. A station it never saw is said so */
   const all = seen().stations, met = Object.prototype.hasOwnProperty.call(all, sid), known = met ? clean(all[sid]) : '';
-  const line = lines[0], st = el('div', 'card'), nameIn = el('input'), cmd = many ? el('ol', 'cmds') : el('pre', 'cmd', line);
+  const line = lines[0], nameIn = el('input'), cmd = many ? el('ol', 'cmds') : el('pre', 'cmd', line);
   if (many) lines.forEach(l => { const li = el('li'); li.append(el('pre', 'cmd', l)); cmd.append(li); });
-  st.append(el('span', 'lbl', 'לאיזה שרת'));
-  if (known) st.append(el('span', '', known), el('span', 'ltr note', sid));
-  else if (met) st.append(el('span', 'ltr', sid));
-  else {
-    nameIn.type = 'text'; nameIn.maxLength = 40; nameIn.placeholder = 'שם לשרת (לא חובה)'; nameIn.setAttribute('aria-label', 'שם לשרת, לא חובה');
-    st.append(el('span', 'ltr', sid), el('p', 'warn', 'זו הפעם הראשונה שהדפדפן הזה מתבקש לאשר פקודה לתחנה הזאת. תחנה שאתה לא מכיר: בטל. אפשר לתת לה שם, כדי שתזהה אותה בפעם הבאה.'), nameIn);
-  }
-  const when = el('div', 'card');
-  when.append(el('span', 'lbl', 'האישור'), el('span', '', many ? 'לפקודות האלה בלבד, כל אחת פעם אחת. הראשונה מתחילה עד ' + at + ', וכל פקודה אחריה מתחילה מיד כשהקודמת הצליחה.'
-    : 'לפקודה הזאת בלבד, פעם אחת, עד ' + at + '.'));
+  if (!met) { nameIn.type = 'text'; nameIn.maxLength = 40; nameIn.placeholder = 'שם לשרת (לא חובה)'; nameIn.setAttribute('aria-label', 'שם לשרת, לא חובה'); }
   const size = many ? lines.length + ' פקודות, ' + lines.reduce((n, l) => n + l.length, 0) + ' תווים.' : (argv.length === 1 ? 'מילה אחת' : argv.length + ' מילים') + ', ' + line.length + ' תווים.';
-  show(many ? 'אישור ' + lines.length + ' פקודות כ-root' : 'אישור פקודה כ-root', [el('p', 'note', many
-    ? 'אלה הפקודות שירוצו בשרת כ-root אם תאשר, לפי הסדר, ונעצרות בראשונה שנכשלת. קרא את כולן: המכשיר חותם על מה שכתוב כאן, ולא על מה שמוצג בפאנל.'
-    : 'זו הפקודה שתרוץ בשרת כ-root אם תאשר. קרא את כולה: המכשיר חותם על מה שכתוב כאן, ולא על מה שמוצג בפאנל.'), cmd,
-    el('p', 'note', size), st, when, asker(),
-    ...buttons('אשר במכשיר הזה', async () => {
+  show(many ? 'אישור ' + lines.length + ' פקודות כ-root' : 'אישור פקודה כ-root', [
+    met ? null : el('p', 'warn', 'זו הפעם הראשונה שהדפדפן הזה מתבקש לאשר פקודה לתחנה הזאת. תחנה שאתה לא מכיר: בטל. אפשר לתת לה שם, כדי שתזהה אותה בפעם הבאה.'), askerWarn(), cmd,
+    facts(fact('לאיזה שרת', ...(known ? [el('span', '', known), el('span', 'ltr note', sid)] : [el('span', 'ltr', sid)])),
+      fact('האישור', el('span', '', many ? 'לפקודות האלה בלבד, כל אחת פעם אחת. הראשונה מתחילה עד ' + at + ', וכל פקודה אחריה מתחילה מיד כשהקודמת הצליחה.'
+        : 'לפקודה הזאת בלבד, פעם אחת, עד ' + at + '.')), asker()),
+    met ? null : nameIn,
+    el('p', 'note', (many ? 'אלה הפקודות שירוצו בשרת כ-root אם תאשר, לפי הסדר, ונעצרות בראשונה שנכשלת. קרא את כולן: המכשיר חותם על מה שכתוב כאן, ולא על מה שמוצג בפאנל.'
+      : 'זו הפקודה שתרוץ בשרת כ-root אם תאשר. קרא את כולה: המכשיר חותם על מה שכתוב כאן, ולא על מה שמוצג בפאנל.') + ' ' + size),
+    buttons('אשר במכשיר הזה', async () => {
       const name = known || clean(nameIn.value);
       if (Math.floor(Date.now() / 1000) >= exp) return 'האישור כבר לא בתוקף. בטל, ולחץ "אשר" שוב בפאנל.';
       const ch = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(textOf(sid, exp, nonce, m.c)));
@@ -195,6 +194,7 @@ function onMessage(e) {
   if (e.data.t === 'cancel') { if (cur && mode === 'sign' && !busy && asked && e.data.nonce === asked) { answer({ ok: false, error: 'gone' }); wait('הבקשה כבר לא מחכה לאישור, ולא נחתמה.'); } return; }
   if (cur) return;
   cur = true; idle = Date.now();
+  try { window.focus(); } catch (x) {}
   if (e.data.t === 'add') { mode = 'add'; askAdd(e.data); } else if (e.data.t === 'sign') { mode = 'sign'; askSign(e.data); } else refuse('הבקשה מהפאנל לא מוכרת.');
 }
 /* While the window waits for the next request of its session it tells the panel it is ready, to the panel's own address only. An
